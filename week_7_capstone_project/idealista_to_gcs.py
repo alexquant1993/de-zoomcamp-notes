@@ -1,3 +1,6 @@
+# Import custom functions
+from cleaning_functions import *
+
 # Built-in imports
 import asyncio
 import json
@@ -151,10 +154,10 @@ class IdealistaScraper:
         """
         properties = []
         to_scrape = [self.make_request(url) for url in urls]
-        for response in tqdm_asyncio(asyncio.as_completed(to_scrape), total=len(to_scrape), desc='Scraping Properties'):
+        for response in tqdm_asyncio(asyncio.as_completed(to_scrape), total=len(to_scrape), desc='Scraping Properties', ncols=100):
             response = await response
             if response is not None:
-                print(f"Scraping property: {response.url}")
+                print(response.url)
                 properties.append(self.parse_property(response))
                 await asyncio.sleep(self.get_random_sleep_interval())
 
@@ -191,7 +194,7 @@ class IdealistaScraper:
             for page in range(2, total_pages + 1)
         ]
 
-        for response in tqdm_asyncio(asyncio.as_completed(to_scrape), total=len(to_scrape), desc='Scraping Search Results'):
+        for response in tqdm_asyncio(asyncio.as_completed(to_scrape), total=len(to_scrape), desc='Scraping Search Results', ncols=100):
             property_urls.extend(self.parse_search(await response)) 
 
         return property_urls
@@ -240,7 +243,18 @@ class IdealistaScraper:
         feature_dict = {}
         for feature_block in soup.select('.details-property-h3'):
             feature_name = feature_block.text.strip()
-            features = [feat.text.strip() for feat in feature_block.find_next('div').select('li')]
+            if feature_name != 'Certificado energético':
+                features = [feat.text.strip() for feat in feature_block.find_next('div').select('li')]
+            else:
+                features = []
+                for feat in feature_block.find_next('div').select('li'):
+                    feat_props = feat.find_all('span')
+                    type_certificate = feat_props[0].text.strip()
+                    kwh_m2 = feat_props[1].text.strip()
+                    energy_label = feat_props[1]['title'].upper()
+                    energy_feat = f"{type_certificate} {kwh_m2} {energy_label}"
+                    features.append(energy_feat.strip())
+                        
             feature_dict[feature_name] = features
         return feature_dict
 
@@ -337,6 +351,7 @@ class IdealistaScraper:
                 flat_dict[f"{prefix}{k}"] = v
         return flat_dict
 
+
 def save_to_csv(property_data: List[Dict[str, Any]]):
     """Save scraped properties to a CSV file for debugging"""
     df = pd.DataFrame(property_data)
@@ -344,99 +359,52 @@ def save_to_csv(property_data: List[Dict[str, Any]]):
     print("Scraped properties saved to 'scraped_properties.csv'")
 
 
-def get_geocode_details(address1: str, address2: str, geocode) -> pd.Series:
-    """
-    Get geocode details given two addresses. The first address is the full address
-    and the second address is the generic location. A geocode object from geopy.geocoders
-    is required as an argument."""
-    # Try with the full address first
-    location = geocode(address1)
-    # If that doesn't work, try with the generic location
-    if location is None:
-        location = geocode(address2)
-    # If that doesn't work, return None for all fields
-    if location:
-        return pd.Series({
-            'full_address': location.raw['display_name'],
-            'postal_code': location.raw['display_name'].split(",")[-2].strip(),
-            'class': location.raw.get('class'),
-            'type': location.raw.get('type'),
-            'latitude': location.latitude,
-            'longitude': location.longitude,
-            'importance': location.raw.get('importance'),
-            'place_id': location.raw.get('place_id')
-        })
-    else:
-        return pd.Series({
-            'full_address': None,
-            'postal_code': None,
-            'class': None,
-            'type': None,
-            'latitude': None,
-            'longitude': None,
-            'importance': None,
-            'place_id': None
-        })
-
-
 # @task(retries=3, log_prints=True)
-async def scrape_search_task(scraper: IdealistaScraper, url: str) -> List[str]:
-    """Scrape a search page to get property URLs"""
-    return await scraper.scrape_search(url)
+async def scrape_search_task(scraper: IdealistaScraper, url: str, paginate=True) -> List[str]:
+    """Scrape a search page to get property URLs
+    Args:
+        scraper: An IdealistaScraper instance
+        url: The URL of the search page
+        paginate: Whether to scrape all pages of the search results (default True)
+    Returns:
+        A list of property URLs
+    """
+    return await scraper.scrape_search(url, paginate=paginate)
 
 
 # @task(retries=3, log_prints=True)
 async def scrape_properties_task(scraper: IdealistaScraper, property_urls: List[str]) -> List[Dict[str, Any]]:
-    """Scrape a list of property pages to get property data"""
+    """Scrape a list of property pages to get property data
+    Args:
+        scraper: An IdealistaScraper instance
+        property_urls: A list of property URLs
+    Returns:
+        A list of dictionaries representing each property
+    """
     scraped_properties = await scraper.scrape_properties(property_urls)
     flattened_properties = [scraper.flatten_dict(asdict(item)) for item in scraped_properties]
     return flattened_properties
 
 
-# def clean_data_task(property_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-#     """Clean scraped property data to be uploaded to GCS"""
-#     df = pd.DataFrame(property_data)
-#     import pandas as pd
-#     import re
-#     from geopy.geocoders import Nominatim
-#     from geopy.extra.rate_limiter import RateLimiter
-#     df = pd.read_csv("scraped_properties.csv")
-#     # Get ID from URL
-#     df_out = pd.DataFrame()
-#     df_out['ID_LISTING'] = df['url'].apply(lambda x: re.findall(r"\d+", x)[0])
-#     df_out['URL'] = df['url']
-#     # Get type of property and address from title and location
-#     df_out['TYPE_PROPERTY'] = df['title'].str.split('en venta en').str[0].str.strip()
-#     df_out['ADDRESS'] = df['title'].str.split('en venta en').str[1].str.strip() + ', ' + df['location']
-#     df_out['LOCATION'] = df['location']
-#     # Get ZIP code based on address and location
-#     geocoder = Nominatim(user_agent="idealista-scraper")
-#     geocode = RateLimiter(geocoder.geocode, min_delay_seconds=1)
-#     df_out[['FULL_ADDRESS', 'ZIP_CODE', 'CLASS_LOCATION', 'TYPE_LOCATION',
-#             'LATITUDE', 'LONGITUDE', 'IMPORTANCE_LOCATION', 'LOCATION_ID']] = \
-#         df_out.apply(lambda row: get_geocode_details(row['ADDRESS'], row['LOCATION'], geocode), axis=1)
-#     # Get price and currency
-#     df_out['PRICE'] = df['price']
-#     df_out['CURRENCY'] = df['currency']
-#     # Get listing description
-#     df_out['LISTING_DESCRIPTION'] = df['description']
-
-#     return clean_data(property_data)
-
 # @flow("idealista_to_gcs_flow")
 async def run():
-    # url = "https://www.idealista.com/venta-viviendas/madrid-madrid/con-publicado_ultimas-24-horas/"
-    # scraper = IdealistaScraper()
-    # property_urls = scrape_search_task(scraper, url)
-    # property_data = scrape_properties_task(scraper, property_urls)
-    # await scraper.session.aclose()
-    # save_to_csv(property_data)
+    # Scrape idealista listings given a search URL    
+    url = "https://www.idealista.com/venta-viviendas/madrid-madrid/con-publicado_ultimas-24-horas/"
+    scraper = IdealistaScraper()
+    property_urls = await scrape_search_task(scraper, url)
+    property_data = await scrape_properties_task(scraper, property_urls)
+    await scraper.session.aclose()
+    save_to_csv(property_data)
+
+    # Clean up scraped data 
+    cleaned_property_data = await clean_data(property_data)
+    cleaned_property_data.to_csv("clean_scraped_properties.csv", index=False, encoding='utf-8')
 
     # Debugging one URL
-    url = ['https://www.idealista.com/inmueble/101190720/']
-    scraper = IdealistaScraper()
-    property_data = await scraper.scrape_properties(url)
-    await scraper.session.aclose()
+    # url = ['https://www.idealista.com/inmueble/101184964/']
+    # scraper = IdealistaScraper()
+    # property_data = await scraper.scrape_properties(url)
+    # await scraper.session.aclose()
 
 if __name__ == "__main__":
     asyncio.run(run())
