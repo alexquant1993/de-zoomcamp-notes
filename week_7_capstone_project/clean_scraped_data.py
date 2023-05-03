@@ -1,18 +1,24 @@
 # Asynchronous functions for cleaning data
 import asyncio
 import aiohttp
+
 # Geopy imports
 from geopy.adapters import AioHTTPAdapter
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import AsyncRateLimiter
+
 # Progress bar
 from tqdm import tqdm
+
 # Built-in imports
 import locale
 from datetime import datetime
 import pandas as pd
 import re
 from typing import Dict, List, Any
+
+# Prefect imports
+from prefect import task
 
 
 async def get_geocode_details(address1: str, address2: str, geocode) -> pd.Series:
@@ -43,8 +49,6 @@ async def get_geocode_details(address1: str, address2: str, geocode) -> pd.Serie
         return pd.Series({
             'full_address': location.raw['display_name'],
             'postal_code': zip_code,
-            'class': location.raw.get('class'),
-            'type': location.raw.get('type'),
             'latitude': location.latitude,
             'longitude': location.longitude,
             'importance': location.raw.get('importance'),
@@ -54,8 +58,6 @@ async def get_geocode_details(address1: str, address2: str, geocode) -> pd.Serie
         return pd.Series({
             'full_address': None,
             'postal_code': None,
-            'class': None,
-            'type': None,
             'latitude': None,
             'longitude': None,
             'importance': None,
@@ -73,8 +75,6 @@ async def get_geocode_details_batch(df: pd.DataFrame) -> pd.DataFrame:
         pd.DataFrame: Dataframe with geocode details
             - FULL_ADDRESS
             - ZIP_CODE
-            - CLASS_LOCATION
-            - TYPE_LOCATION
             - LATITUDE
             - LONGITUDE
             - IMPORTANCE_LOCATION
@@ -90,8 +90,8 @@ async def get_geocode_details_batch(df: pd.DataFrame) -> pd.DataFrame:
             results.append(result)
 
     df_out = pd.DataFrame()
-    df_out[['FULL_ADDRESS', 'ZIP_CODE', 'CLASS_LOCATION', 'TYPE_LOCATION',
-            'LATITUDE', 'LONGITUDE', 'IMPORTANCE_LOCATION', 'LOCATION_ID']] = pd.DataFrame(results)
+    df_out[['FULL_ADDRESS', 'ZIP_CODE', 'LATITUDE', 'LONGITUDE',
+            'IMPORTANCE_LOCATION', 'LOCATION_ID']] = pd.DataFrame(results)
     
     return df_out
 
@@ -199,20 +199,22 @@ def split_building_features(features: List[str]) -> Dict[str, str]:
     
     for feature in copy_features:
         lower_feature = feature.lower()
-        if 'bajo' in lower_feature or 'planta' in lower_feature:
-            # Floor number
-            if 'bajo' in lower_feature:
-                dict_out['FLOOR'] = 0
-            elif 'entreplanta' in lower_feature:
-                dict_out['FLOOR'] = 0.5
-            else:
-                dict_out['FLOOR'] = int(re.search(r'\d+', lower_feature).group())
-        if 'interior' in lower_feature or 'exterior' in lower_feature:
-            if 'interior' in lower_feature:
-                dict_out['PROPERTY_ORIENTATION'] = 'Interior'
-            elif 'exterior' in lower_feature:
-                dict_out['PROPERTY_ORIENTATION'] = 'Exterior'
+        if any([word in lower_feature for word in ['bajo', 'planta', 'interior', 'exterior']]):
+            if 'bajo' in lower_feature or 'planta' in lower_feature:
+                # Floor number
+                if 'bajo' in lower_feature:
+                    dict_out['FLOOR'] = 0
+                elif 'entreplanta' in lower_feature:
+                    dict_out['FLOOR'] = 0.5
+                else:
+                    dict_out['FLOOR'] = float(re.search(r'\d+', lower_feature).group())
+            if 'interior' in lower_feature or 'exterior' in lower_feature:
+                if 'interior' in lower_feature:
+                    dict_out['PROPERTY_ORIENTATION'] = 'Interior'
+                elif 'exterior' in lower_feature:
+                    dict_out['PROPERTY_ORIENTATION'] = 'Exterior'
             features.remove(feature)
+        
         elif 'ascensor' in lower_feature:
             if 'con' in lower_feature:
                 dict_out['ELEVATOR'] = True
@@ -335,8 +337,8 @@ def get_features_asdf(pds: pd.Series, split_function) -> pd.DataFrame:
     df_features = pd.DataFrame(df_features)
     return df_features
 
-
-async def clean_data(property_data: List[Dict[str, Any]]) -> pd.DataFrame:
+# @task(retries=3, log_prints=True)
+async def clean_scraped_data(property_data: List[Dict[str, Any]]) -> pd.DataFrame:
     """Clean the data from the scraped properties."""
     print("Cleaning data...")
     df = pd.DataFrame(property_data)
@@ -354,7 +356,10 @@ async def clean_data(property_data: List[Dict[str, Any]]) -> pd.DataFrame:
     df_out = pd.concat([df_out, df_geocode_details], axis=1)
     # Get price and currency
     df_out['PRICE'] = df['price']
+    df_out['ORIGINAL_PRICE'] = df['original_price']
     df_out['CURRENCY'] = df['currency']
+    # Get post tags
+    df_out['TAGS'] = df['tags'].astype(str)
     # Get listing description
     df_out['LISTING_DESCRIPTION'] = df['description']
     # Get poster details
@@ -375,8 +380,8 @@ async def clean_data(property_data: List[Dict[str, Any]]) -> pd.DataFrame:
     # Get last update date and timestamp
     df_out['LAST_UPDATE_DATE'] = df['updated'].apply(parse_date_in_column)
     df_out['TIMESTAMP'] = pd.to_datetime(df['time_stamp'])
-    # Get columns related to photos of the listing - might be useful for future analysis
-    image_cols = [col for col in df.columns if col.startswith('image')]
-    df_out[image_cols] = df[image_cols]
+    # TODO: Get columns related to photos of the listing - might be useful for future analysis
+    # image_cols = [col for col in df.columns if col.startswith('image')]
+    # df_out[image_cols] = df[image_cols]
     
     return df_out

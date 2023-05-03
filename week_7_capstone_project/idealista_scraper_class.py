@@ -1,29 +1,20 @@
-# Import custom functions
-from cleaning_functions import *
-
 # Built-in imports
 import asyncio
 import json
 import re
 import math
 import random
+import time
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from collections import defaultdict
 from urllib.parse import urljoin
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 
 # Import third-party libraries
 import httpx
-import pandas as pd
 from bs4 import BeautifulSoup
 from tqdm.asyncio import tqdm_asyncio
-
-# Prefect dependencies
-# from prefect import flow, task
-# from prefect_gcp.cloud_storage import GcsBucket
-# from prefect_gcp import GcpCredentials
-
 
 @dataclass
 class PropertyResult:
@@ -33,6 +24,7 @@ class PropertyResult:
     location: str
     price: int
     original_price: Optional[int]
+    tags: Optional[List[str]]
     currency: str
     description: str
     poster_type: str
@@ -60,9 +52,19 @@ class IdealistaScraper:
             'accept-language': 'es-ES,es;q=0.9,en;q=0.8',
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36'
         }
-        self.session = httpx.AsyncClient(headers=self.HEADERS, follow_redirects=True)
+        self.session = None
         self.base_url = "https://www.idealista.com"
 
+    
+    async def __aenter__(self):
+        self.session = httpx.AsyncClient(headers=self.HEADERS, follow_redirects=True, timeout=60)
+        return self
+    
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.session.aclose()
+        self.session = None
+    
     async def make_request(self, url: str):
         """
         Make an HTTP request to a URL
@@ -108,6 +110,11 @@ class IdealistaScraper:
         if original_price_element:
             original_price = int(original_price_element.text.strip().replace(".", "").replace(",", ""))
         
+        # Get tags
+        tags = None
+        if soup.select_one('.detail-info-tags'):
+            tags = soup.select_one('.detail-info-tags').text.split()
+        
         # Get poster details
         # If the poster is not a particular/professional, then try with a bank class
         check_professional = soup.select_one('.advertiser-name-container .about-advertiser-name')
@@ -129,6 +136,7 @@ class IdealistaScraper:
             currency=soup.select_one('.info-data-price').contents[-1].strip(),
             price=int(soup.select_one('.info-data-price span').text.replace(".", "").replace(",", "")),
             original_price = original_price,
+            tags = tags,
             description='\n'.join([p.text.strip() for p in soup.select('div.comment p')]),
             poster_type=poster_type,
             poster_name=poster_name,
@@ -350,61 +358,3 @@ class IdealistaScraper:
             else:
                 flat_dict[f"{prefix}{k}"] = v
         return flat_dict
-
-
-def save_to_csv(property_data: List[Dict[str, Any]]):
-    """Save scraped properties to a CSV file for debugging"""
-    df = pd.DataFrame(property_data)
-    df.to_csv("scraped_properties.csv", index=False, encoding='utf-8')
-    print("Scraped properties saved to 'scraped_properties.csv'")
-
-
-# @task(retries=3, log_prints=True)
-async def scrape_search_task(scraper: IdealistaScraper, url: str, paginate=True) -> List[str]:
-    """Scrape a search page to get property URLs
-    Args:
-        scraper: An IdealistaScraper instance
-        url: The URL of the search page
-        paginate: Whether to scrape all pages of the search results (default True)
-    Returns:
-        A list of property URLs
-    """
-    return await scraper.scrape_search(url, paginate=paginate)
-
-
-# @task(retries=3, log_prints=True)
-async def scrape_properties_task(scraper: IdealistaScraper, property_urls: List[str]) -> List[Dict[str, Any]]:
-    """Scrape a list of property pages to get property data
-    Args:
-        scraper: An IdealistaScraper instance
-        property_urls: A list of property URLs
-    Returns:
-        A list of dictionaries representing each property
-    """
-    scraped_properties = await scraper.scrape_properties(property_urls)
-    flattened_properties = [scraper.flatten_dict(asdict(item)) for item in scraped_properties]
-    return flattened_properties
-
-
-# @flow("idealista_to_gcs_flow")
-async def run():
-    # Scrape idealista listings given a search URL    
-    url = "https://www.idealista.com/venta-viviendas/madrid-madrid/con-publicado_ultimas-24-horas/"
-    scraper = IdealistaScraper()
-    property_urls = await scrape_search_task(scraper, url)
-    property_data = await scrape_properties_task(scraper, property_urls)
-    await scraper.session.aclose()
-    save_to_csv(property_data)
-
-    # Clean up scraped data 
-    cleaned_property_data = await clean_data(property_data)
-    cleaned_property_data.to_csv("clean_scraped_properties.csv", index=False, encoding='utf-8')
-
-    # Debugging one URL
-    # url = ['https://www.idealista.com/inmueble/101184964/']
-    # scraper = IdealistaScraper()
-    # property_data = await scraper.scrape_properties(url)
-    # await scraper.session.aclose()
-
-if __name__ == "__main__":
-    asyncio.run(run())
