@@ -337,7 +337,7 @@ def get_features_asdf(pds: pd.Series, split_function) -> pd.DataFrame:
     df_features = pd.DataFrame(df_features)
     return df_features
 
-# @task(retries=3, log_prints=True)
+@task(retries=3, log_prints=True)
 async def clean_scraped_data(property_data: List[Dict[str, Any]]) -> pd.DataFrame:
     """Clean the data from the scraped properties."""
     print("Cleaning data...")

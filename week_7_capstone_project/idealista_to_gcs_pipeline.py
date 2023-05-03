@@ -12,7 +12,7 @@ from dataclasses import asdict
 from prefect import flow, task
 
 
-# @task(retries=3, log_prints=True)
+@task(retries=3, log_prints=True)
 async def scrape_search_task(scraper: IdealistaScraper, url: str, paginate=True) -> List[str]:
     """Scrape a search page to get property URLs
     Args:
@@ -25,7 +25,7 @@ async def scrape_search_task(scraper: IdealistaScraper, url: str, paginate=True)
     return await scraper.scrape_search(url, paginate=paginate)
 
 
-# @task(retries=3, log_prints=True)
+@task(retries=3, log_prints=True)
 async def scrape_properties_task(scraper: IdealistaScraper, property_urls: List[str]) -> List[Dict[str, Any]]:
     """Scrape a list of property pages to get property data
     Args:
@@ -39,7 +39,7 @@ async def scrape_properties_task(scraper: IdealistaScraper, property_urls: List[
     return flattened_properties
 
 
-# @flow(log_prints=True)
+@flow(log_prints=True)
 async def idealista_to_gcs_pipeline(url:str, bucket_name:str, to_path:str, credentials_path:str, testing:bool=False):
     """
     Scrape idealista listings given a search URL and upload to GCS
