@@ -1,0 +1,77 @@
+## Setup
+
+- Enable GooglE Cloud Compute Engine API
+- Create a SSH key pair in your local machine
+    - `ssh-keygen -t rsa -f C:\Users\WINDOWS_USER\.ssh\KEY_FILENAME -C USERNAME -b 2048`
+    - For this case: `ssh-keygen -t rsa -f C:\Users\aarro\.ssh\gcp -C aarro -b 2048`
+- Add SSH key to GCE
+    - Go to Compute Engine -> Metadata -> SSH Keys
+    - Add the public key (gcp.pub) to the list
+- Create a VM instance - Choose Ubuntu 20.04 / Linux
+- Log-in to VM: `bash ssh -i ~/.ssh/gcp USERNAME@EXTERNAL_IP`
+- Check details of the VM instance: htop
+- gcloud CLI is already installed, check with: gcloud --version
+- Install anaconda: 
+    - `https://repo.anaconda.com/archive/Anaconda3-2022.10-Linux-x86_64.sh`
+    - `bash Anaconda3-2022.10-Linux-x86_64.sh`
+- `cd .ssh`
+- `touch config` or `nano config`
+- `code config` (add the following):
+    - Host de-zoomcamp
+        - HostName EXTERNAL_IP
+        - IdentityFile ~/.ssh/gcp
+        - User USERNAME
+- Now you can directly access the VM by: `ssh de-zoomcamp`
+- Check anaconda installation:
+    - `which python`
+- You can access anaconda without logging out just by doing:
+    - `less .bashrc`: see the configuration Unix file. Interesting commands in less mode:
+        - 'j' to go down
+        - 'k' to go up
+        - 'q' to quit
+        - 'space' to go down one page
+        - 'b' to go up one page
+    - `source .bashrc`: to apply the changes
+- Install and update packages
+    - `sudo apt-get update`
+    - `sudo apt-get install docker.io`
+- Check docker installation: 
+    - `docker --version`
+    - `docker run hello-world`
+- Run docker without sudo
+    - `sudo groupadd docker`
+    - `sudo gpasswd -a $USER docker`
+    - `sudo service docker restart`
+    - Log out and log in again
+    - `docker run hello-world`
+    - Try `docker run -it ubuntu bash`, then `ls` and `exit`
+- Install docker-compose
+    - Create a `bin` directory and move there
+    - install docker-compose: `wget https://github.com/docker/compose/releases/download/v2.16.0/docker-compose-linux-x86_64 -O docker-compose`
+    - Convert to executable: `chmod +x docker-compose`
+    - Make it visible for any directory:
+        - `nano .bashrc` and go to the end and add the following: `export PATH=${HOME}/bin:${PATH}`
+        - Ctrl+O to save and Ctrl+X to exit
+        - `source .bashrc`
+        - `which docker-compose`
+    - `docker-compose --version`
+- Install pgcli
+    - `pip install pgcli`
+    - Connect to database: `pgcli -h localhost -U root -d ny_taxi`
+    - Pass password: `root`
+    - List tables: `\dt`
+    - Exit: `Ctrl+D` or `quit`
+- Forward a port from VM to local machine with VSC:
+    - Enable extension ssh
+    - Configure virtual machine
+    - Click on left bottom corner and select `Connect to Host...`
+    - Open terminals and select ports and add port to be forwarded to local machine.
+- Execute a jupyter notebook: `jupyter notebook` and forward port 8888 to local machine.
+- Transfer a file from local machine to remote machine:
+    - Move to folder where the file is located
+    - `sftp de-zoomcamp`
+    - Create directory to store service account credentials: ´mkdir .gc´
+    - `cd .gc`
+    - `put service_account.json`
+- Stop VM instance: `gcloud compute instances stop INSTANCE_NAME` or in bash: `sudo shutdown now`
+- Delete VM instance: `gcloud compute instances delete INSTANCE_NAME`
